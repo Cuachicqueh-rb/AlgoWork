@@ -70,6 +70,6 @@ if __name__ == '__main__':
             config = json.load(f)
         for i in config.keys():
             MIM_Replenish(config[i])
-            time.sleep(2.5)
+            time.sleep(5)
         print()
         time.sleep(300)
