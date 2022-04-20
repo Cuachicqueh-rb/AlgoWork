@@ -110,7 +110,7 @@ class Requestbase:
 
 #########################################################################
 
-class getRates(Requestbase):
+class GetRates(Requestbase):
     def __init__(self, chain, store_file):
         self.cmc = CMC
         self.chain = chain
@@ -234,9 +234,9 @@ if __name__ == '__main__':
     token_address = '0xb31f66aa3c1e785363f0875a1b74e27b85fd66c7'
     chain = 'avalanche'
 
-    query = getRates(chain, config)
-    # print(x.get_apys(token_address))
-    print(query.get_rewardAprs(token_address))
+    query = GetRates(chain, config)
+    # print(query.get_apys(token_address))
+    print(query.Get_rewardAprs(token_address))
 
 
 # # token_address = '0x6B175474E89094C44Da98b954EedeAC495271d0F'
@@ -249,9 +249,9 @@ if __name__ == '__main__':
 # token_address = '0x21be370d5312f44cb42ce377bc9b8a0cef1a4c83' #WFTM
 # chain = 'fantom'
 #
-# x = getRates(chain, config)
+# query = GetRates(chain, config)
 #
 # ## DAI
 # # token_address = '0xd586E7F844cEa2F87f50152665BCbc2C279D8d70'
 #
-# print(x.lending_contract())
+# print(query.lending_contract())
