@@ -1,6 +1,6 @@
 import CMC
 import yaml
-from getRates import getRates
+from getRates import GetRates
 
 price = CMC.get_quote('LUNA', 'USD')
 
@@ -18,9 +18,9 @@ chain = 'avalanche'
 if __name__ == '__main__':
     price = CMC.get_quote(token, 'USD')
     print('{} price USD: ${}'.format(token, round(price, 2)))
-    x = getRates(chain, config)
-    depositAPY, borrowAPY = x.get_apys(token_address)
-    incentiveDepositAPR, incentiveBorrowAPR = x.get_rewardAprs(token_address)
-    print('\nAAVE rates on {} chain for {}.'.format(chain, token))
+    query = GetRates(chain, config)
+    depositAPY, borrowAPY = query.get_apys(token_address)
+    incentiveDepositAPR, incentiveBorrowAPR = query.get_rewardAprs(token_address)
+    print('\nAAVE V2 rates on {} chain for {}.'.format(chain, token))
     print('Deposit APY: {}%, Borrow APY: {}%'.format(round(depositAPY, 2), borrowAPY))
     print('Deposit Incentive APR: {}%, Borrow Incentive APR: {}%'.format(incentiveDepositAPR, incentiveBorrowAPR))
