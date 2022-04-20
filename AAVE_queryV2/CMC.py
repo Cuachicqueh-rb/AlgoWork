@@ -1,6 +1,6 @@
 import json, requests, time
 
-API_KEY = '63f4e12f-68aa-4205-afb0-bf5009a656d0'
+API_KEY = ## insert API key
 BASE_URL = 'https://pro-api.coinmarketcap.com/v1/cryptocurrency{}'
 
 HEADERS = {
