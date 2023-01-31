@@ -5,8 +5,6 @@ from statsmodels.tsa.stattools import adfuller
 import statsmodels.api as sm
 from pykalman import KalmanFilter
 import matplotlib.pyplot as plt
-# import empyrical as em
-# import pyfolio as pf
 
 
 class Pair_Trade_Backtester(object):
