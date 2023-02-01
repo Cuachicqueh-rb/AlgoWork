@@ -45,7 +45,7 @@ def MIM_Replenish(config):
     if new_balance > 1000000:
         subject = "{}{}".format('MIM Supply Alert for ', token)
         body = "MIM Borrow supply of {} has been added for {}.".format(new_balance, token)
-        to = "rbowell412@gmail.com"
+        to = #email address
         email_alert(subject, body, to)
         print('New supply has been added for', token + str(','), 'and alert has been sent.')
 
