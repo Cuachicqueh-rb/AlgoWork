@@ -5,14 +5,35 @@ from statsmodels.tsa.stattools import adfuller
 import statsmodels.api as sm
 from pykalman import KalmanFilter
 import matplotlib.pyplot as plt
+import sys
+sys.path.append("..")
+from useful.config import export_figure
 
 
 class Pair_Trade_Backtester(object):
-    def __init__(self, price_data):
-        self.price_data = price_data
+    def __init__(self):
+        self.price_data = None
         self.df = None
         
-    def prepare_data(self):
+    def find_cointegrated_pairs(self, df, critical_value = 0.1):
+        n = df.shape[1] # length of dataframe
+        pvalue_matrix = np.ones((n, n)) # initialise the matrix of p
+        keys = df.columns
+        pairs = []
+        for i in range(n):
+            for j in range(i+1, n): # for j bigger than i
+                ticker1 = df[keys[i]]
+                ticker2 = df[keys[j]]
+                # print(ticker1.name, ticker2.name)
+                result = sm.tsa.stattools.coint(ticker1, ticker2)
+                pvalue = result[1]
+                pvalue_matrix[i, j] = pvalue
+                if pvalue < critical_value:
+                    pairs.append((keys[i], keys[j], pvalue))
+        return pvalue_matrix, pairs
+        
+    def prepare_data(self, price_data):
+        self.price_data = price_data
         df = self.price_data.ffill().dropna()
         for t in df.columns:
             df['{}ret'.format(t)] = np.log(df[t]/df[t].shift(1))
@@ -35,17 +56,20 @@ class Pair_Trade_Backtester(object):
                 else:
                     return df.plot()
     
-    def get_johansen_test(self, log=False):
+    def get_johansen_test(self):
         #(Alexander, 2002), “Since it is normally the case that 
         # log prices will be cointegrated when the actual prices 
         # are cointegrated, it is standard, but not necessary, 
         # to perform the cointegration analysis on log prices.”
         df = self.price_data.copy()
         df.dropna(inplace=True)
-        if log:
-            df = np.log(df)
         jres = coint_johansen(df, det_order=0, k_ar_diff=1)
         result = sum(jres.lr2 > jres.cvm[:,-2]) == 2
+        if result == False:
+            df = np.log(df)
+            df.dropna(inplace=True)
+            jres = coint_johansen(df, det_order=0, k_ar_diff=1)
+            result = sum(jres.lr2 > jres.cvm[:,-2]) == 2
         return print('Johansen test of cointegrated series w/ significant (<0.05) max eigen statistic:', result)
    
     def get_adf_spread(self):
@@ -67,6 +91,9 @@ class Pair_Trade_Backtester(object):
             print("The time series is stationary at the 10% significance level.")
          
     def KalmanFilterAverage(self, x):
+        # Smoothing the input data helps to reduce the impact of random noise in the 
+        # data and produce a more stable estimate of the underlying trend, 
+        # which can lead to more accurate and reliable estimates of the system's state.
         # Construct a Kalman filter
         kf = KalmanFilter(transition_matrices = [1],
             observation_matrices = [1],
@@ -96,9 +123,11 @@ class Pair_Trade_Backtester(object):
                         transition_covariance=trans_cov)
         # Use the observations y to get running estimates and errors for the state parameters
         state_means, state_covs = kf.filter(y.values)
-        return state_means
+        return state_means, state_covs
 
     def half_life(self, spread):
+        # The half-life is a measure of the time it takes for the data 
+        # to reduce to half its original value.
         spread_lag = spread.shift(1)
         spread_lag.iloc[0] = spread_lag.iloc[1]
         spread_ret = spread - spread_lag
@@ -110,9 +139,9 @@ class Pair_Trade_Backtester(object):
         if halflife <= 0:
             halflife = 1
         return halflife
-
+    
     def build(self, halflife=90, plot=False, thres=2, delta=1e-3, opt=False, export=False, halflife_func=False):
-        df = self.prepare_data()
+        df = self.prepare_data(self.price_data)
         X = df.columns[1]
         Y = df.columns[0]
         x = df[X]
@@ -123,7 +152,7 @@ class Pair_Trade_Backtester(object):
         else:
             print(f'In our reg Y is {Y} and X is {X}.')
         state_means = self.KalmanFilterRegression(self.KalmanFilterAverage(x),
-                                            self.KalmanFilterAverage(y), delta=delta)
+                                            self.KalmanFilterAverage(y), delta=delta)[0]
 
         # state_means = self.KalmanFilterRegression(x,y, delta=delta)
 
@@ -165,8 +194,11 @@ class Pair_Trade_Backtester(object):
         df['position'] = np.where(df['zscore'] < -thres*stop_loss, 0, df['position'])
 
         ### convert to cash when zscore goes to zero and forward fill
-        df['position'] = np.where(df['zscore']*df['zscore'].shift(1) < 0, 
+        distance = df['zscore'] - df['zscore'].mean()
+        df['position'] = np.where(distance*distance.shift(1) < 0, 
                                     0, df['position'])
+        # df['position'] = np.where(df['zscore']*df['zscore'].shift(1) < 0, 
+        #                             0, df['position'])
         df['position'] = df['position'].ffill().fillna(0)
         
         ##### trading logic
@@ -196,8 +228,23 @@ class Pair_Trade_Backtester(object):
         CAGR = round(((float(end_val) / float(start_val)) ** (252.0/days)) - 1,4)*100
         return df, sharpe, CAGR
 
-    def portfolio_eval(self):
+    def portfolio_eval(self, plot=False):
         df = self.df
+        if plot:
+            # Visualise short / long spread
+            short = df[df['position'] == -1.0]['spread'].hvplot.scatter(
+                color='red',
+                legend=False,
+                width=1000,
+                height=400)
+            long = df[df['position'] == 1.0]['spread'].hvplot.scatter(
+                color='green',
+                legend=False,
+                width=1000,
+                height=400)
+            spread = df.spread.hvplot()
+            plot = spread * short * long
+            plot.opts(xaxis=None)
         #####################################
         # Prepare Metrics
         ticker_1 = 'Cumulative Returns ' + df.columns[0]
