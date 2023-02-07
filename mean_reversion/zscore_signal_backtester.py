@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 import sys
 sys.path.append("..")
 from useful.config import get_adf
+# import warnings
+# warnings.filterwarnings("ignore")
 # import pyfolio as pf
 
 ####
@@ -285,14 +287,7 @@ eis.optimise_bollinger_bands(sort_by='Annual Return')
 # returns = df['strategy']
 # bmk_ret = np.log(df[index_to_test]/df[index_to_test].shift(1))
 # pf.create_simple_tear_sheet(returns=returns, benchmark_rets=bmk_ret)
-   
-##### Even more metrics
-# import empyrical as em
-# em.calmar_ratio(returns)
-# em.max_drawdown(returns)
-# em.cagr(returns)
-# em.conditional_value_at_risk(returns)
- 
+    
 ###################################################################   
 ##### Group Tester - Highlight all and run, then individually run the
 # countries below
