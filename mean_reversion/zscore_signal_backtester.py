@@ -27,13 +27,6 @@ class Economic_Indicator_Signals(object):
         valid_row = self.df[self.col].first_valid_index()
         self.df = self.df.loc[valid_row:].astype(float)
         self.df.loc[:, self.index] = self.df[self.index].ffill()
-        # self.df = self.df.copy()
-        # self.df['ret_signal'] = self.df[self.col].pct_change()
-        # self.df['ret_index'] = self.df[self.index].pct_change()
-        # if arithmetic_returns:
-        #     self.df['ret_signal'] = self.df[self.col].pct_change()
-        #     self.df['ret_index'] = self.df[self.index].pct_change()
-        # else:
         zscore = self.df[self.col]+100
         self.df['ret_signal'] = np.log(zscore/zscore.shift(1))
    
@@ -55,6 +48,7 @@ class Economic_Indicator_Signals(object):
         plt.axhline(mean)
            
     def get_adfuller_test(self):
+        # Test of stationarity. It tests the regression of the residuals.
         return get_adf(self.df[self.col])
    
     def reduce_lookahead_bias(self, remove_covid=False, remove_gfc=False, remove_outliers=False):
@@ -72,7 +66,7 @@ class Economic_Indicator_Signals(object):
            
         if remove_covid:
             from_ts = '2020-03-01'
-            to_ts = '2020-06-01'
+            to_ts = '2020-05-01'
             df = df[(df.index < from_ts) | (df.index > to_ts)]
            
         if remove_gfc:
@@ -96,18 +90,7 @@ class Economic_Indicator_Signals(object):
         df['position'] = df['position'].ffill()
         df['position'] = np.where((df['position'] == -1) & (df[self.col] < mean), 0, df['position'])
         df['position'] = np.where((df['position'] == 1) & (df[self.col] > mean), 0, df['position'])
- 
-        # # determine returns and trading logic
-        df['strategy'] = (df['ret_signal'] * df['position'].shift(1)).fillna(0)
-        ## cumulative returns
-        # if arithmetic_returns:
-        #     df['cstrategy'] = (1 + df["strategy"]).cumprod() - 1
-        #     df['cIndex'] = (1 + df["ret_index"]).cumprod() - 1
-        #     df['drawdown'] = df['cstrategy'].cummax() - df['cstrategy']           
-        # else:
-        df['cstrategy'] = df['strategy'].cumsum().apply(np.exp)
-        # df['cIndex'] = df['ret_index'].cumsum().apply(np.exp)
-        df['drawdown'] = df['cstrategy'].cummax() - df['cstrategy']
+        
         # if half_IR:
         #     volatility = (df['strategy'] - df['ret_index']).std()
         #     mean_return = (df['strategy'] - df['ret_index']).mean()
@@ -117,11 +100,52 @@ class Economic_Indicator_Signals(object):
         #     # use the halfed IR as benchmark
         #     df['excess_ret'] = df['strategy'] - half_IR_ratio
         #     # df['cstrategy'] = excess_ret.cumsum().apply(np.exp)
+       
+        # # determine returns and trading logic
+        df['strategy'] = (df['ret_signal'] * df['position'].shift(1)).fillna(0)
+        ## cumulative returns
+        df['cstrategy'] = df['strategy'].cumsum().apply(np.exp)
+        # df['cIndex'] = df['ret_index'].cumsum().apply(np.exp)
+        df['drawdown'] = df['cstrategy'].cummax() - df['cstrategy']
         self.df = df   
         return df
-                                       
+   
+    def bollinger_bands(self, window=12, std=2, plot=False):
+        df = self.df.copy()
+        df['mid'] = df[self.col].rolling(window=window).mean()
+        std_rolling = df[self.col].rolling(window=window).std()
+        df['upbnd'] = df['mid'] + std_rolling * std
+        df['lwbnd'] = df['mid'] - std_rolling * std
+        if plot:
+            plt.title('Bollinger Bands')
+            plt.plot(df[self.col], label='Signal Line')
+            plt.plot(df['upbnd'], label='Bollinger Up', c='g')
+            plt.plot(df['lwbnd'], label='Bollinger Down', c='r')
+            plt.legend()
+            plt.show()
+       
+        # short when signal goes above threshold or swap with contrarian
+        df['position'] = np.where(df[self.col] > df['upbnd'],
+                            -1*self.contrarian, np.nan)
+        # long when signal goes below threshold or swap with contrarian
+        df['position'] = np.where(df[self.col] < -df['lwbnd'],
+                                1*self.contrarian, df['position'])
+       
+        # close out position when it crosses middle sma
+        df['position'] = df['position'].ffill().fillna(0)
+        df['position'] = np.where((df['position'] == -1) & (df[self.col] < df['mid']), 0, df['position'])
+        df['position'] = np.where((df['position'] == 1) & (df[self.col] > df['mid']), 0, df['position'])
+ 
+        # # determine returns and trading logic
+        df['strategy'] = (df['ret_signal'] * df['position'].shift(1)).fillna(0)
+        df['cstrategy'] = df['strategy'].cumsum().apply(np.exp)
+        df['drawdown'] = df['cstrategy'].cummax() - df['cstrategy']   
+        
+        self.df = df
+       return df
+                                      
     def portfolio_eval(self):
-        df = self.df
+        df = self.df.copy()
         #####################################
         # Prepare Metrics
         metrics = [
@@ -177,78 +201,129 @@ class Economic_Indicator_Signals(object):
             portfolio_eval.loc['Sortino Ratio'] = 0
         return portfolio_eval
  
-    def optimise_threshold(self):
+    def optimise_mean_reversion_threshold(self, sort_by: str):
+        string_list = ['Annual Return', 'Cumulative Returns', 'Cumulative Returns Index','Annual Volatility', 'Sharpe Ratio', 'Threshold']
+        assert sort_by in string_list, f"{sort_by} not found in list: {string_list}"
         threshold = np.arange(0.5, 3.5, 0.5)
         ret_list = []
         for thres in [x for x in threshold]:
             self.mean_reversion(thres)
             metrics = self.portfolio_eval().T
             ret_list.append((metrics.iloc[:,0][-1], metrics.iloc[:,1][-1], metrics.iloc[:,2][-1], metrics.iloc[:,3][-1], metrics.iloc[:,4][-1], thres))
-        opt = pd.DataFrame(ret_list, columns=['Annual Return', 'Cumulative Returns', 'Cumulative Returns Index','Annual Volatility', 'Sharpe Ratio', 'Threshold'])
+        opt = pd.DataFrame(ret_list, columns=string_list)
         return opt
    
-###################################################################
-if __name__ == '__main__':
-    ############ indivudal signal and index tester
-    start, end =  None, None
-    eis = Economic_Indicator_Signals(signals, indexes, col='US', contrarian=1, index='S&P 500', start=start, end=end)
-    # eis = Economic_Indicator_Signals(signals, indexes, col='Eurozone', contrarian=1, index='Eurostoxx 50')
-    eis.initialise_data()
-    eis.reduce_lookahead_bias(remove_covid=False, remove_gfc=False, remove_outliers=True)
-    eis.get_adfuller_test()
-    eis.get_signal_plot(thres=1, remove_blackswans=False)
-    df = eis.mean_reversion(thres=1)
-    eis.portfolio_eval()
-    eis.optimise_threshold()
+    def optimise_bollinger_bands(self, sort_by: str):
+        string_list = ['Annual Return', 'Cumulative Returns', 'Cumulative Returns Index','Annual Volatility', 'Sharpe Ratio', 'Window', 'Std']
+        assert sort_by in string_list, f"{sort_by} not found in list: {string_list}"
+        window_length = np.arange(2, 24, 2)
+        threshold = np.arange(0.5, 3.5, 0.5)
+        ret_list = []
+        for window, thres in [(x,y) for x in window_length for y in threshold]:
+            self.bollinger_bands(window=window, std=thres)
+            metrics = self.portfolio_eval().T
+            ret_list.append((metrics.iloc[:,0][-1], metrics.iloc[:,1][-1], metrics.iloc[:,2][-1], metrics.iloc[:,3][-1], metrics.iloc[:,4][-1], window, thres))
+        opt = pd.DataFrame(ret_list, columns=string_list)
+        return opt.sort_values(by=sort_by, ascending=False)
     
-     ###################################################################  
-    def tester(signals, indexes, signal, index_specific, thres=0.5, contrarion=1,
-               remove_covid=False, remove_gfc=False, remove_outliers=False,
-               remove_blackswans=False):
-        temp = pd.DataFrame()
-        temp.index = ['Annual Return', 'Cumulative Returns', 'Cumulative Returns Index',
-                    'Annual Volatility', 'Sharpe Ratio', 'Sortino Ratio']
-           
-        for ind in index_specific:
-            eis = Economic_Indicator_Signals(signals, indexes, col=signal, index=ind,
-                                            contrarian=contrarion)
-            eis.initialise_data()
-            if remove_covid:
-                eis.reduce_lookahead_bias(remove_covid=True, remove_gfc=False, remove_outliers=False)
-            if remove_gfc:
-                eis.reduce_lookahead_bias(remove_covid=False, remove_gfc=True, remove_outliers=False)
-            if remove_outliers:
-                eis.reduce_lookahead_bias(remove_covid=False, remove_gfc=False, remove_outliers=True)
-            if remove_blackswans:
-                eis.reduce_lookahead_bias(remove_covid=True, remove_gfc=True, remove_outliers=True)
+###################################################################  
+def tester(signals, indexes, signal, index_specific, thres=0.5, window=12,
+           contrarion=1, bollinger_bands=False, remove_covid=False, remove_gfc=False,
+           remove_outliers=False, remove_blackswans=False):
+    temp = pd.DataFrame()
+    temp.index = ['Annual Return', 'Cumulative Returns', 'Cumulative Returns Index',
+                'Annual Volatility', 'Sharpe Ratio', 'Sortino Ratio']
+       
+    for ind in index_specific:
+        eis = Economic_Indicator_Signals(signals, indexes, col=signal, index=ind,
+                                        contrarian=contrarion)
+        eis.initialise_data()
+        if remove_covid:
+            eis.reduce_lookahead_bias(remove_covid=True, remove_gfc=False, remove_outliers=False)
+        if remove_gfc:
+            eis.reduce_lookahead_bias(remove_covid=False, remove_gfc=True, remove_outliers=False)
+        if remove_outliers:
+            eis.reduce_lookahead_bias(remove_covid=False, remove_gfc=False, remove_outliers=True)
+        if remove_blackswans:
+            eis.reduce_lookahead_bias(remove_covid=True, remove_gfc=True, remove_outliers=True)
+       
+        if bollinger_bands:
+            eis.bollinger_bands(window=window, std=thres)
+        else:
             eis.mean_reversion(thres=thres)
-            temp[f'{ind}'] = eis.portfolio_eval().iloc[:,0]
-        return temp
+           
+        temp[f'{ind}'] = eis.portfolio_eval().iloc[:,0]
+    return temp
+ 
+###################################################################
+###################################################################
+############ Indivudal signal and index tester
+start, end =  None, None
+signal_list = ['US', 'Australia', 'China', 'Eurozone', 'World proxy', 'Combined Australia + China']
+index_list = ['S&P 500', 'S&P/ASX 300', 'Eurostoxx 50', 'Shanghai Composite',
+           'Global Equities - Large Cap (h)', 'Australian Sovereigns',
+           'Global Sovereigns', 'US 3 month LIBOR']  
+ 
+signal_to_test = 'US'
+index_to_test = 'S&P 500'
+contrarian = 1 # swap with -1
+eis = Economic_Indicator_Signals(signals, indexes, col=signal_to_test, index=index_to_test, contrarian=contrarian, start=start, end=end)
+eis.initialise_data()
+eis.reduce_lookahead_bias(remove_covid=True, remove_gfc=True, remove_outliers=True)
+eis.get_adfuller_test()
+eis.get_signal_plot(thres=1, remove_blackswans=False)
+df = eis.mean_reversion(thres=1)
+eis.portfolio_eval()
+df = eis.bollinger_bands(window=6, std=1, plot=True)
+eis.portfolio_eval()
    
-    threshold = 0.5
-    contrarian = 1
-    remove_blackswan = True
-    remove_covid=False
-    remove_gfc=False
-    remove_outliers=False
+##### Optimise parameters
+eis.optimise_mean_reversion_threshold(sort_by='Cumulative Returns')
+eis.optimise_bollinger_bands(sort_by='Annual Return')
+ 
+##### Other metrics
+# returns = df['strategy']
+# bmk_ret = np.log(df[index_to_test]/df[index_to_test].shift(1))
+# pf.create_simple_tear_sheet(returns=returns, benchmark_rets=bmk_ret)
    
-    us_indexes = ['S&P 500', 'Global Equities - Large Cap (h)', 'Global Sovereigns']
-    US = tester(signals, indexes, 'US', us_indexes, thres=threshold, contrarion=contrarian, remove_blackswans=remove_blackswan, remove_covid=remove_covid, remove_gfc=remove_gfc, remove_outliers=remove_outliers)
-    aus_indexes = ['S&P/ASX 300', 'Australian Sovereigns']
-    Aus = tester(signals, indexes, 'Australia', aus_indexes, thres=threshold, contrarion=contrarian, remove_blackswans=remove_blackswan, remove_covid=remove_covid, remove_gfc=remove_gfc, remove_outliers=remove_outliers)
-    china_indexes = ['S&P/ASX 300', 'Shanghai Composite','Australian Sovereigns']
-    China = tester(signals, indexes, 'China', china_indexes, thres=threshold, contrarion=contrarian, remove_blackswans=remove_blackswan, remove_covid=remove_covid, remove_gfc=remove_gfc, remove_outliers=remove_outliers)
-    euro_indexes = ['Eurostoxx 50']
-    Eurozone = tester(signals, indexes, 'Eurozone', euro_indexes, thres=threshold, contrarion=contrarian, remove_blackswans=remove_blackswan, remove_covid=remove_covid, remove_gfc=remove_gfc, remove_outliers=remove_outliers)
-    world_proxy_indexes = ['S&P 500', 'Global Equities - Large Cap (h)', 'Global Sovereigns']
-    World_proxy = tester(signals, indexes, 'World proxy', world_proxy_indexes, thres=threshold, contrarion=contrarian, remove_blackswans=remove_blackswan, remove_covid=remove_covid, remove_gfc=remove_gfc, remove_outliers=remove_outliers)
-    combined_indexes = ['S&P/ASX 300', 'Australian Sovereigns']
-    Combined_Aus_China = tester(signals, indexes, 'Combined Australia + China', combined_indexes, thres=threshold, contrarion=contrarian, remove_blackswans=remove_blackswan, remove_covid=remove_covid, remove_gfc=remove_gfc, remove_outliers=remove_outliers)
+##### Even more metrics
+# import empyrical as em
+# em.calmar_ratio(returns)
+# em.max_drawdown(returns)
+# em.cagr(returns)
+# em.conditional_value_at_risk(returns)
+ 
+###################################################################   
+##### Group Tester - Highlight all and run, then individually run the
+# countries below
+
+threshold = 2
+window = 6
+contrarian = 1
+bollinger_bands = True
    
-    US
-    Aus
-    China
-    Eurozone
-    World_proxy
-    Combined_Aus_China
-    ###################################################################
+remove_blackswans = True
+remove_covid = False
+remove_gfc = False
+remove_outliers = False
+   
+us_indexes = ['S&P 500', 'Global Equities - Large Cap (h)', 'Global Sovereigns']
+US = tester(signals, indexes, 'US', us_indexes, thres=threshold, bollinger_bands=bollinger_bands, window=window, contrarion=contrarian, remove_blackswans=remove_blackswans, remove_covid=remove_covid, remove_gfc=remove_gfc, remove_outliers=remove_outliers)
+aus_indexes = ['S&P/ASX 300', 'Australian Sovereigns']
+Aus = tester(signals, indexes, 'Australia', aus_indexes, thres=threshold, bollinger_bands=bollinger_bands, window=window, contrarion=contrarian, remove_blackswans=remove_blackswans, remove_covid=remove_covid, remove_gfc=remove_gfc, remove_outliers=remove_outliers)
+china_indexes = ['S&P/ASX 300', 'Shanghai Composite','Australian Sovereigns']
+China = tester(signals, indexes, 'China', china_indexes, thres=threshold, bollinger_bands=bollinger_bands, window=window, contrarion=contrarian, remove_blackswans=remove_blackswans, remove_covid=remove_covid, remove_gfc=remove_gfc, remove_outliers=remove_outliers)
+euro_indexes = ['Eurostoxx 50']
+Eurozone = tester(signals, indexes, 'Eurozone', euro_indexes, thres=threshold, bollinger_bands=bollinger_bands, window=window, contrarion=contrarian, remove_blackswans=remove_blackswans, remove_covid=remove_covid, remove_gfc=remove_gfc, remove_outliers=remove_outliers)
+world_proxy_indexes = ['S&P 500', 'Global Equities - Large Cap (h)', 'Global Sovereigns']
+World_proxy = tester(signals, indexes, 'World proxy', world_proxy_indexes, thres=threshold, bollinger_bands=bollinger_bands, window=window, contrarion=contrarian, remove_blackswans=remove_blackswans, remove_covid=remove_covid, remove_gfc=remove_gfc, remove_outliers=remove_outliers)
+combined_indexes = ['S&P/ASX 300', 'Australian Sovereigns']
+Combined_Aus_China = tester(signals, indexes, 'Combined Australia + China', combined_indexes, thres=threshold, bollinger_bands=bollinger_bands, window=window, contrarion=contrarian, remove_blackswans=remove_blackswans, remove_covid=remove_covid, remove_gfc=remove_gfc, remove_outliers=remove_outliers)
+   
+US
+Aus
+China
+Eurozone
+World_proxy
+Combined_Aus_China
+###################################################################
