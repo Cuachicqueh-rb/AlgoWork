@@ -39,44 +39,72 @@ plt.show()
     
 ################################################################ 
 ########## Build strategy
-pair_num = 0
-pair = X_test[list(pairs[pair_num][0:2])]
-ptb.prepare_data(pair)
+pairs_list
+pair_num = 1
+chosen_pair = X_test[list(pairs_list[pair_num-1][0:2])]
+# chosen_pair = backup[list(pairs_list[pair_num-1][0:2])] # for whole series
+
+ptb.prepare_data(chosen_pair)
 ptb.plot_prices(log=True, normalised=True, plot=True)
-halflife, thres = 115, 1.5
-df = ptb.build(halflife=halflife, halflife_func=False, thres=thres, plot=True)
+halflife, thres = 90, 1.5
+ptb.build(halflife=halflife, halflife_func=False, thres=thres, plot=True)
 
 ##### Check for stationarity
-bt.get_adf_spread(df['spread']) ## must be significant to at least 10%
+ptb.get_adf_spread() ## must be significant to at least 10%
 
 ##### Run Backtest
-df, sharpe, cagr = ptb.backtest(thres=thres)
-print(f'Sharpe ratio: {round(sharpe,2)}, CAGR: {cagr}%.')
+backtest, sharpe, cagr = ptb.backtest(thres=thres)
+print(f'Cumret: {round(backtest.cstrategy.iloc[-1],2)}, Sharpe ratio: {round(sharpe,2)}, CAGR: {cagr}%, Max Drawdown: {round(backtest.drawdown.max()*100,2)}%.')
 
 ##### Performance 
-df[['cstrategy','cTicker1','cTicker2']].plot()
+backtest[['cstrategy','cTicker1','cTicker2']].plot()
 ptb.portfolio_eval()
 
 ################################################################
 ########## Optimise Parameters
-df = ptb.prepare_data(pair)
-def optimise_params(stoploss=20, tc=0.001):
-    # half_life = np.arange(10, 300, 5)
-    # threshold = np.arange(0.5, 3.5, 0.5)
-    half_life = np.arange(5, 160, 10)
+ptb.prepare_data(chosen_pair)
+def optimise_params(pair_num, stoploss=20, tc=0.001):
+    half_life = np.arange(50, 150, 10)
     threshold = np.arange(1, 2.5, 0.5)
-    delta = [1e-5, 1e-4, 1e-3, 1e-2, 1e-1]
-    delta = [1e-3]
-    ret_list = []
-    for halflife, thres, delta_ in [(x,y,z) for x in half_life for y in threshold for z in delta]:
-        ptb.build(halflife=halflife, thres=thres, opt=True, delta=delta_)
+    # delta = [1e-3, 1e-7] # 
+    delta = [1e-7]
+    opt_list = []
+    for halflife, thres, D in [(x,y,z) for x in half_life for y in threshold for z in delta]:
+        ptb.prepare_data(X_test[list(pairs_list[pair_num-1][0:2])])
+        ptb.build(halflife=halflife, thres=thres, opt=True, delta=D)
         backtest, sharpe, cagr = ptb.backtest(thres=thres, stop_loss=stoploss, tc=tc)
-        ret_list.append((halflife, thres, sharpe, delta_, cagr, backtest['cstrategy'][-1]))
-    opt = pd.DataFrame(ret_list, columns=['Halflife', 'Threshold', 'Sharpe', 'Delta', 'CAGR', 'Cumret'])
+        print(f'Col1-2: {backtest.columns[0]}-{backtest.columns[1]}, Cumret: {round(backtest.cstrategy[-1],2)},  Sharpe ratio: {round(sharpe,2)}, CAGR: {cagr}%, Max Drawdown: {round(backtest.drawdown.max()*100,2)}%\n')
+        opt_list.append((halflife, thres, sharpe, D, cagr, backtest['cstrategy'][-1]))
+    opt = pd.DataFrame(opt_list, columns=['Halflife', 'Threshold', 'Sharpe', 'Delta', 'CAGR', 'Cumret'])
     return opt
 
-ret_list = optimise_params()
-ret_list.sort_values(by='Cumret', ascending=False).head(10)
-[ret_list[ret_list['Threshold'] == i].sort_values(by='Cumret').tail(1)[['Halflife', 'Threshold', 'Sharpe', 'Cumret']] for i in ret_list['Threshold'].unique()]
+pairs_list
+opt_list = optimise_params(pair_num=pair_num, stoploss=20)
+opt_list.sort_values(by='Cumret', ascending=False).head(10)
+[opt_list[opt_list['Threshold'] == i].sort_values(by='Cumret').tail(1)[['Halflife', 'Threshold', 'Sharpe', 'Cumret', 'Delta']] for i in opt_list['Threshold'].unique()]
 
-    
+################################################################
+########## Looping through all pairs
+
+def loop_through_all_pairs(pairs_list, X_test, halflife=90, thres=1.5, delta=1e-7):
+    ret_list = []
+    in_position = []
+    for pair in range(len(pairs_list)):
+        cols = pairs_list[pair][0:2]
+        chosen_pair_loop = X_test[list(cols)]
+        ptb.prepare_data(chosen_pair_loop)
+        ptb.plot_prices(log=True, normalised=True, plot=False)
+        halflife, thres = halflife, thres
+        print(f"Chosen pair {list(cols)}.")
+        ptb.build(delta=delta, halflife=halflife, halflife_func=False, thres=thres, plot=False)
+        ptb.get_adf_spread()
+        backtest, sharpe, cagr = ptb.backtest(long_pairs=False, alloc_strategy=1, thres=thres, stop_loss=20)
+        if backtest['position'][-1] != 0:
+            in_position.append(list(cols))      
+        print(f'Cumret: {round(backtest.cstrategy.iloc[-1],2)}, Sharpe ratio: {round(sharpe,2)}, CAGR: {cagr}%, Max Drawdown: {round(backtest.drawdown.max()*100,2)}%.\n')
+    return ret_list, in_position, recent, trade
+
+halflife, thres = 90, 1.5
+ret_list, in_position_pairs, in_position = loop_through_all_pairs(pairs_list, X_test, halflife, thres)
+
+
